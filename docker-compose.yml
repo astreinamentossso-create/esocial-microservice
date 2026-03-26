@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  esocial-api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - API_TOKEN=${API_TOKEN}
+      - ESOCIAL_ENV=${ESOCIAL_ENV:-restricted_production}
+    volumes:
+      - ./certificates:/app/certificates
+    restart: unless-stopped
