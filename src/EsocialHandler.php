@@ -4,7 +4,7 @@ namespace App;
 
 use NFePHP\eSocial\Event;
 use NFePHP\eSocial\Tools;
-use NFePHP\eSocial\Common\Certificate;
+use NFePHP\Common\Certificate;
 
 class EsocialHandler
 {
