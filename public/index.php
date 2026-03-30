@@ -227,8 +227,9 @@ $app->post('/esocial/status', function (Request $request, Response $response) {
     try {
         $handler = new \App\EsocialHandler();
 
-        $result = $handler->checkStatus(
-            $protocol,
+        $result = $handler->submit(
+            $eventType,
+            $eventData,
             $cnpj,
             $certificateBase64,
             $certificatePassword,
