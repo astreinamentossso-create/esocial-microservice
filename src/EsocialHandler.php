@@ -30,11 +30,23 @@ class EsocialHandler
         string $certificatePassword,
         string $environment = 'restricted_production'
     ): array {
-        // Decode the certificate from base64
+
         $certContent = base64_decode($certificateBase64);
+
         if (!$certContent) {
             throw new \InvalidArgumentException('Invalid certificate: could not decode base64');
         }
+
+        // Aqui depois você vai integrar com eSocial de verdade
+
+        return [
+            "success" => true,
+            "event_type" => $eventType,
+            "cnpj" => $cnpj,
+            "ambiente" => $environment,
+            "obs" => "Teste OK"
+        ];
+    }
 
         // Save certificate temporarily
         $tempCertPath = tempnam(sys_get_temp_dir(), 'esocial_cert_');
