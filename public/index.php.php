@@ -225,16 +225,10 @@ $app->post('/esocial/status', function (Request $request, Response $response) {
     }
 
     try {
-        $handler = new \App\EsocialHandler();
-
-        $result = $handler->submit(
-            $eventType,
-            $eventData,
-            $cnpj,
-            $certificateBase64,
-            $certificatePassword,
-            $environment
-        );
+        $response->getBody()->write(json_encode([
+            "debug" => "cheguei aqui"
+        ]));
+        return $response->withHeader('Content-Type', 'application/json');
 
         return jsonResponse($response, $result);
 
