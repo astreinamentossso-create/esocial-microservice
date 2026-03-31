@@ -225,19 +225,21 @@ $app->post('/esocial/status', function (Request $request, Response $response) {
     }
 
     try {
-        $response->getBody()->write(json_encode([
-            "debug" => "cheguei aqui"
-        ]));
-        return $response->withHeader('Content-Type', 'application/json');
+        $app->post('/esocial/submit', function ($request, $response) {
+    
+            error_log("🔥 DEBUG: rota chamada");
 
-        return jsonResponse($response, $result);
+            $payload = [
+                "debug" => "cheguei aqui",
+                "time" => date("Y-m-d H:i:s")
+            ];
 
-    } catch (\Throwable $e) {
+            $response->getBody()->write(json_encode($payload));
 
-        return jsonResponse($response, [
-            'success' => false,
-            'error' => $e->getMessage(),
-        ], 500);
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withStatus(200);
+        });
     }
 
 })->add($authMiddleware);
