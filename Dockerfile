@@ -28,3 +28,5 @@ WORKDIR /var/www/html
 RUN composer install --no-dev --optimize-autoloader
 
 EXPOSE 80
+
+CMD ["sh", "-c", "sed -i \"s/80/${PORT}/g\" /etc/apache2/ports.conf /etc/apache2/sites-enabled/000-default.conf && apache2-foreground"]
