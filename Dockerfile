@@ -28,4 +28,4 @@ COPY . .
 EXPOSE 8080
 
 # Rodar servidor PHP
-CMD ["php", "-S", "0.0.0.0:8080", "-t", "public"]
+CMD php -S 0.0.0.0:8080 -t public
