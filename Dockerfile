@@ -1,31 +1,30 @@
-FROM php:8.2-cli
+FROM php:8.2-apache
 
-WORKDIR /app/public
-
-# Instalar dependências do sistema
+# Instalar extensões necessárias
 RUN apt-get update && apt-get install -y \
-    git \
-    unzip \
-    libxml2-dev \
-    libcurl4-openssl-dev \
-    libssl-dev \
+    git unzip libxml2-dev libcurl4-openssl-dev libssl-dev \
     && docker-php-ext-install xml soap curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar composer
+# Habilitar mod_rewrite
+RUN a2enmod rewrite
+
+# Definir DocumentRoot para /public
+ENV APACHE_DOCUMENT_ROOT /var/www/html/public
+
+RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' \
+    /etc/apache2/sites-available/*.conf \
+    /etc/apache2/apache2.conf \
+    /etc/apache2/conf-available/*.conf
+
+# Copiar arquivos
+COPY . /var/www/html
+
+# Instalar composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Copiar apenas arquivos do composer primeiro (evita cache errado)
-COPY composer.json composer.lock ./
+WORKDIR /var/www/html
 
-# Instalar dependências
 RUN composer install --no-dev --optimize-autoloader
 
-# Agora copia o resto do projeto
-COPY . .
-
-# Expor porta
-EXPOSE 8080
-
-# Rodar servidor PHP
-CMD php -S 0.0.0.0:8080
+EXPOSE 80
