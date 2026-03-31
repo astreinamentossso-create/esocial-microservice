@@ -1,6 +1,6 @@
 FROM php:8.2-cli
 
-WORKDIR /app
+WORKDIR /app/public
 
 # Instalar dependências do sistema
 RUN apt-get update && apt-get install -y \
@@ -28,4 +28,4 @@ COPY . .
 EXPOSE 8080
 
 # Rodar servidor PHP
-CMD php -S 0.0.0.0:8080 -t public
+CMD php -S 0.0.0.0:8080
