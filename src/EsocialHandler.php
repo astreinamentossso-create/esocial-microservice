@@ -30,55 +30,32 @@ class EsocialHandler
         string $certificatePassword,
         string $environment = 'restricted_production'
     ): array {
-
-        $certContent = base64_decode($certificateBase64);
-
-        if (!$certContent) {
+        // Decode the certificate from base64 (strict mode)
+        $certContent = base64_decode($certificateBase64, true);
+        if ($certContent === false || $certContent === '') {
             throw new \InvalidArgumentException('Invalid certificate: could not decode base64');
         }
 
-        // Aqui depois você vai integrar com eSocial de verdade
+        // Load certificate with pre-validation to avoid hard crashes on invalid PKCS#12
+        $certificate = $this->loadCertificateSafely($certContent, $certificatePassword);
 
-        return [
-            "success" => true,
-            "event_type" => $eventType,
-            "cnpj" => $cnpj,
-            "ambiente" => $environment,
-            "obs" => "Teste OK"
-        ];
-    }
+        // Configure the tools
+        $config = $this->buildConfig($cnpj, $environment);
+        $tools = new Tools($config, $certificate);
 
-        // Save certificate temporarily
-        $tempCertPath = tempnam(sys_get_temp_dir(), 'esocial_cert_');
-        file_put_contents($tempCertPath, $certContent);
+        // Build the event XML (precisa de config + certificate)
+        $xml = $this->buildEventXml($eventType, $eventData, $cnpj, $config, $certificate);
 
-        try {
-            // Load certificate using sped-esocial
-            $certificate = Certificate::readPfx($certContent, $certificatePassword);
+        // Sign the XML
+        $signedXml = $tools->signEvent($xml);
 
-            // Configure the tools
-            $config = $this->buildConfig($cnpj, $environment);
-            $tools = new Tools($config, $certificate);
+        // Send to eSocial
+        $response = $tools->sendLot([$signedXml], $this->generateLotId());
 
-            // Build the event XML
-            $xml = $this->buildEventXml($eventType, $eventData, $cnpj);
+        // Parse response
+        $result = $this->parseSubmitResponse($response);
 
-            // Sign the XML
-            $signedXml = $tools->signEvent($xml);
-
-            // Send to eSocial
-            $response = $tools->sendLot([$signedXml], $this->generateLotId());
-
-            // Parse response
-            $result = $this->parseSubmitResponse($response);
-
-            return $result;
-        } finally {
-            // Clean up temp file
-            if (file_exists($tempCertPath)) {
-                unlink($tempCertPath);
-            }
-        }
+        return $result;
     }
 
     /**
@@ -91,13 +68,13 @@ class EsocialHandler
         string $certificatePassword,
         string $environment = 'restricted_production'
     ): array {
-        $certContent = base64_decode($certificateBase64);
-        if (!$certContent) {
+        $certContent = base64_decode($certificateBase64, true);
+        if ($certContent === false || $certContent === '') {
             throw new \InvalidArgumentException('Invalid certificate: could not decode base64');
         }
 
         try {
-            $certificate = Certificate::readPfx($certContent, $certificatePassword);
+            $certificate = $this->loadCertificateSafely($certContent, $certificatePassword);
             $config = $this->buildConfig($cnpj, $environment);
             $tools = new Tools($config, $certificate);
 
@@ -113,40 +90,82 @@ class EsocialHandler
     }
 
     /**
+     * Validate PKCS#12 before creating the NFePHP certificate instance.
+     */
+    private function loadCertificateSafely(string $certContent, string $certificatePassword): Certificate
+    {
+        $pkcs12 = [];
+        $isValid = @openssl_pkcs12_read($certContent, $pkcs12, $certificatePassword);
+
+        if (!$isValid || empty($pkcs12['cert']) || empty($pkcs12['pkey'])) {
+            $lastOpenSslError = null;
+            while ($error = openssl_error_string()) {
+                $lastOpenSslError = $error;
+            }
+
+            $detail = $lastOpenSslError ? " Detalhe OpenSSL: {$lastOpenSslError}" : '';
+            throw new \RuntimeException('Certificado inválido ou senha incorreta.' . $detail);
+        }
+
+        return Certificate::readPfx($certContent, $certificatePassword);
+    }
+
+    /**
      * Build the sped-esocial config array
      */
     private function buildConfig(string $cnpj, string $environment): string
     {
         $tpAmb = $environment === 'production' ? 1 : 2;
         $cnpjClean = preg_replace('/\D/', '', $cnpj);
+        $cnpjBase = substr($cnpjClean, 0, 8);
 
-        $config = [
-            'tpAmb' => $tpAmb,
-            'verProc' => 'ALA_SST_1.0',
-            'eventoVersion' => 'S_01_02_00',
-            'layoutVersion' => 'S_01_02_00',
-            'tpInsc' => 1,
-            'nrInsc' => substr($cnpjClean, 0, 8),
-            'nmRazao' => '',
-        ];
+        // sped-esocial Tools expects a JSON string that decodes (json_decode without assoc)
+        // into a stdClass with these top-level properties.
+        $config = new \stdClass();
+        $config->tpAmb = $tpAmb;
+        $config->tpInsc = 1;
+        $config->nrInsc = $cnpjBase;
+        $config->verProc = 'ALA_SST_1.0';
+        $config->eventoVersion = 'S.01.03.00';
+        $config->serviceVersion = '1.1.1';
+        $config->companyVersion = 'S.01.03.00';
+        $config->eventVersion = 'S.01.03.00';
 
-        return json_encode($config);
+        // Some versions of the lib also look for these as nested objects.
+        $config->empregador = new \stdClass();
+        $config->empregador->tpInsc = 1;
+        $config->empregador->nrInsc = $cnpjBase;
+        $config->empregador->nmRazao = '';
+
+        $config->transmissor = new \stdClass();
+        $config->transmissor->tpInsc = 1;
+        $config->transmissor->nrInsc = $cnpjBase;
+
+        return json_encode($config, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     /**
      * Build event XML based on type
+     *
+     * IMPORTANTE: Os métodos Event::evt* da lib sped-esocial recebem
+     * ($config, $std, $certificate) — NUNCA o número do evento.
      */
-    private function buildEventXml(string $eventType, array $data, string $cnpj): string
-    {
+    private function buildEventXml(
+        string $eventType,
+        array $data,
+        string $cnpj,
+        string $config,
+        Certificate $certificate
+    ): string {
         $cnpjClean = preg_replace('/\D/', '', $cnpj);
 
         switch ($eventType) {
             case 'S-2210':
-                return $this->buildS2210($data, $cnpjClean);
+                return $this->buildS2210($data, $cnpjClean, $config, $certificate);
             case 'S-2220':
-                return $this->buildS2220($data, $cnpjClean);
+                return $this->buildS2220($data, $cnpjClean, $config, $certificate);
             case 'S-2240':
-                return $this->buildS2240($data, $cnpjClean);
+                return $this->buildS2240($data, $cnpjClean, $config, $certificate);
             default:
                 throw new \InvalidArgumentException("Tipo de evento não suportado: {$eventType}");
         }
@@ -155,7 +174,7 @@ class EsocialHandler
     /**
      * Build S-2210 - CAT
      */
-    private function buildS2210(array $data, string $cnpj): string
+    private function buildS2210(array $data, string $cnpj, string $config, Certificate $certificate): string
     {
         $std = new \stdClass();
 
@@ -222,14 +241,14 @@ class EsocialHandler
         $std->cat->atestado->emitente->nrOC = $data['medicoCRM'] ?? '';
         $std->cat->atestado->emitente->ufOC = $data['medicoUF'] ?? '';
 
-        $event = Event::evtCAT(2210, $std);
+        $event = Event::evtCAT($config, $std, $certificate);
         return $event->toXML();
     }
 
     /**
      * Build S-2220 - Monitoramento da Saúde do Trabalhador
      */
-    private function buildS2220(array $data, string $cnpj): string
+    private function buildS2220(array $data, string $cnpj, string $config, Certificate $certificate): string
     {
         $std = new \stdClass();
 
@@ -259,14 +278,14 @@ class EsocialHandler
         $std->exMedOcup->aso->medico->nrCRM = $data['medicoCRM'] ?? '';
         $std->exMedOcup->aso->medico->ufCRM = $data['medicoUF'] ?? '';
 
-        $event = Event::evtMonit(2220, $std);
+        $event = Event::evtMonit($config, $std, $certificate);
         return $event->toXML();
     }
 
     /**
      * Build S-2240 - Condições Ambientais do Trabalho
      */
-    private function buildS2240(array $data, string $cnpj): string
+    private function buildS2240(array $data, string $cnpj, string $config, Certificate $certificate): string
     {
         $std = new \stdClass();
 
@@ -306,7 +325,7 @@ class EsocialHandler
             $std->infoExpRisco->agNoc[] = $ag;
         }
 
-        $event = Event::evtExpRisco(2240, $std);
+        $event = Event::evtExpRisco($config, $std, $certificate);
         return $event->toXML();
     }
 
